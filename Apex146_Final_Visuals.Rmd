@@ -1,0 +1,293 @@
+---
+title: "Apex146 Data Visuals"
+author: "Priscilla Siow"
+date: "June 14, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(readr)
+library(tidyr)
+library(tidyverse)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(gapminder)
+library(viridis)
+library(hrbrthemes)
+library(readxl)
+```
+
+## Reorganize Data
+
+```{r echo = TRUE}
+
+#Upload dataset
+MXGP <- read_csv("MXGP Speed&Consistency.csv")
+
+# drop duplicates
+mxgp_nodup <- MXGP[-(1747:1748), ] %>% distinct()
+
+#Rearrange Data
+mxgp_mod1 <- mxgp_nodup %>%
+  select(-contains('LapTime')) %>%
+  pivot_longer(cols = c(`Consistency T1`, 
+                        `Consistency T2`, 
+                        `Consistency T3`, 
+                        `Consistency T4`, 
+                        `Speed T1`, 
+                        `Speed T2`, 
+                        `Speed T3`, 
+                        `Speed T4`, 
+                        `Combined T1`, 
+                        `Combined T2`, 
+                        `Combined T3`, 
+                        `Combined T4`), 
+               names_to = 'Variable', 
+               values_to = "Measurement") 
+
+# split strings
+var <- mxgp_mod1$Variable %>% 
+  str_split_fixed(" ", n = 2) %>% 
+  as_tibble()
+
+# bind
+mxgp_mod2 <- mxgp_mod1 %>% 
+  bind_cols(var) %>% 
+  select(-Variable) %>%
+  rename(variable = V1,
+         sector = V2)
+
+#### Check to make sure there are no more duplicates
+
+# mxgp_mod2 %>%
+#   group_by(year, circuitnum, circuitname, racenum, ridername, variable, sector) %>%
+#   count() %>%
+#   filter(n > 1) %>%
+#   ungroup() %>%
+#   select(year, circuitnum, circuitname, racenum, ridername) %>%
+#   distinct()
+
+# pivot
+mxgp_mod3 <- mxgp_mod2 %>%
+  select(year, circuitname, circuitnum, racenum, 
+         ridername, sector, variable, Measurement) %>%
+  pivot_wider(id_cols = year:sector, 
+              names_from = variable, 
+              values_from = Measurement)
+  
+# import unique identifier for each rider
+riderIDs <- read_excel("mydata.xlsx")
+
+# merge
+mxgp_mod4 <- left_join(mxgp_mod3, riderIDs) %>% select(-n)
+
+# aggregate across sectors
+mxgp_mod5 <- mxgp_mod4 %>% 
+  group_by(year, circuitname, circuitnum, racenum, ID) %>%
+  summarize(across(Consistency:Combined, list(avg = mean, sd = sd))) %>% 
+  as_tibble()
+
+eventIDs <- mxgp_mod5 %>% 
+  select(year, circuitnum, racenum) %>%
+  distinct() %>%
+  arrange(year, circuitnum, racenum) %>%
+  mutate(eventnum = row_number())
+
+data_tidy <- merge(mxgp_mod5, eventIDs, by = c('year', 'circuitnum', 'racenum')) %>%
+  as_tibble()
+
+key <- riderIDs %>%
+  distinct(ID, .keep_all = TRUE) %>%
+  select(-c(n))
+
+data_tidy <- merge(data_tidy, key, by = "ID")
+
+```
+
+  The original data was pivoted in regards to the sector. For example, each Consistency was split into four columns respective of each sector: T1, T2, T3, and T4. The data was pivoted by using T1, T2, T3, and T4 as a separate column and its respective measurement in another. Then the the consistency of the sectors were combined to create an aggregate column. The same method was done for the Speed index. Later on, an event number variable, "eventnum", was created based on "circuitnum" and "racenum". 
+  When analyzing the original data, there were several data entry errors especially in regards to "ridernames" there were inconsistent naming conventions used for certain riders such as "Bobryshev Evgeny" and " Bobryshev Evgeny". The extra space created an entire separate rider even though it is the same person. To remedy this issue I created unique rider IDs and manually checked for any rider duplicates and assigned the IDs accordingly. I also noticed that the circuit numbers for each year were not consistent, so there were different number of races each year making it difficult to compare races by year. 
+
+## Interactive Time Plots by Year
+
+```{r echo = TRUE}
+
+yr <- 2019
+
+####2019
+rider_subset_2019 <- data_tidy %>%
+  filter(year == yr) %>%
+  select(ridername, eventnum) %>%
+  group_by(ridername) %>%
+  count() %>%
+  filter(n > 25) %>% #if they participated in more than 25 events
+  pull(ridername)
+
+time19 <- data_tidy %>%
+  filter(year == yr, ridername %in% rider_subset_2019) %>% 
+  arrange(eventnum) %>%
+  ggplot(aes(x = eventnum, y = Speed_avg, fill = factor(ridername), text = ridername)) +
+  geom_area( ) +
+    scale_fill_viridis(discrete = TRUE) +
+    theme(legend.position="none") +
+    ggtitle("Rider's Speed Average throughout 2019") +
+    theme_ipsum() +
+    theme(legend.position="none")
+
+time19 <- ggplotly(time19)
+time19
+
+yr20 <- 2020
+  
+####2020
+rider_subset_2020 <- data_tidy %>%
+  filter(year == yr20) %>%
+  select(ridername, eventnum) %>%
+  group_by(ridername) %>%
+  count() %>%
+  filter(n > 25) %>% #if they participated in more than 25 events
+  pull(ridername)
+
+time20 <- data_tidy %>%
+  filter(year == yr20, ridername %in% rider_subset_2020) %>% 
+  arrange(eventnum) %>%
+  ggplot(aes(x = eventnum, y = Speed_avg, fill = factor(ridername), text = ridername)) +
+  geom_area( ) +
+    scale_fill_viridis(discrete = TRUE) +
+    theme(legend.position="none") +
+    ggtitle("Rider's Speed Average throughout 2020") +
+    theme_ipsum() +
+    theme(legend.position="none")
+
+time20 <- ggplotly(time20)
+time20
+
+```
+
+Time plots were chosen to trace a specific rider's progress throughout the year. The "yr" variable is used to change years from 2018 through 2020. Some riders, however, did not participate in enough events so their progress is not continuous and further examination is needed to determine which riders should be included in the plot.   
+
+## Boxplots with Rider Factors and Jitters
+
+```{r echo = TRUE}
+#group dataframe has factors 
+group <- data_tidy %>%
+  group_by(ridername) %>% 
+  summarize(avg_Speed = mean(Speed_avg, na.rm = TRUE), avg_Cons = mean(Consistency_avg, na.rm = TRUE)) 
+  
+#consistency factor levels
+lbl_cons <- c("high_cons", "med_cons", "low_cons")
+cut_points <- quantile(group$avg_Cons, c(0.3, 0.6, 1))
+
+#speed factor levels
+lbl_speed <- c("high_speed", "med_speed", "low_speed")
+speed_cut <- quantile(group$avg_Speed, c(0.3, 0.6, 1))
+
+group <- group %>% 
+  mutate(cons_factor = cut(avg_Cons, breaks = c(0, cut_points), label = lbl_cons), speed_factor = cut(avg_Speed, breaks = c(0, speed_cut), label = lbl_speed))
+
+#boxplot for consistency
+bp_fig1 <- ggplot(group, aes(cons_factor, avg_Cons)) + 
+  geom_boxplot(fill = NA, alpha = 0.2, outlier.shape = NA) + 
+  geom_jitter(aes(color = ridername), shape=16, width = 0.2, height = 0) + 
+  labs(y = "Average Consistency") +
+  ggtitle("Boxplot of Riders based on Consistency Factor") +
+  ylim(c(0.8,1))
+
+bp_fig1 <- ggplotly(bp_fig1)
+bp_fig1
+
+#boxplot for speed
+bp_fig2 <- ggplot(group, aes(speed_factor, avg_Speed)) + 
+  geom_boxplot(fill = NA, alpha = 0.2, outlier.shape = NA) + 
+  geom_jitter(aes(color = ridername), shape=16, width = 0.2, height = 0) + 
+  labs(y = "Average Speed") +
+  ggtitle("Boxplot of Riders based on Speed Factor")
+
+bp_fig2 <- ggplotly(bp_fig2)
+bp_fig2
+```
+
+The boxplot with jitters are separate entities to show the variance of the riders in each speed_factor or consistency_factor. The speed and consistency factor were created to categorize which riders were had high, low, or medium consistency and speed. It is also an interactive plot in which the jitters display the specific riders and which factor they belong in. 
+
+## A violin wrapping a boxplot
+```{r echo = TRUE}
+#Violin for speed factor
+ggplot(group, aes(speed_factor, avg_Speed, fill = speed_factor)) +
+    geom_violin(width=1.4) +
+    geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+    scale_fill_viridis(discrete = TRUE) +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)) +
+    ggtitle("A Violin wrapping a boxplot") +
+    xlab("")
+
+#Violin for consistency
+ggplot(group, aes(cons_factor, avg_Cons, fill = cons_factor)) +
+    geom_violin(width=1.4) +
+    geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+    scale_fill_viridis(discrete = TRUE) +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)) +
+    ggtitle("A Violin wrapping a boxplot") +
+    xlab("")
+
+```
+
+The violin wrapping the boxplot is a similar plot to the one above with the jittered points on top of the boxplot. However, the violin is able to better show the distribution of the data set for each group and is better for larger datasets like the one provided. 
+
+## Speed vs. Consistency Interactive Plot
+
+```{r echo = TRUE}
+#Speed vs Consistency by ridername 
+speed_cons <- data_tidy %>% 
+  as.tibble() %>%
+  group_by(ridername) %>% 
+  summarize(avgSpeed = mean(Speed_avg), avgCons = mean(Consistency_avg)) 
+
+#Interactive plot
+fig1 <- gapminder %>%
+  ggplot(data = speed_cons, mapping = aes(avgSpeed, avgCons,  color = ridername)) + 
+  geom_point() + 
+  theme(legend.position = "none") + 
+  labs(x = "Average Speed", y = "Average Consistency") +
+  ggtitle("Speed vs. Consistency") +
+  scale_y_continuous(trans = "probit") 
+
+ggplotly(fig1)
+```
+
+The speed vs. consistency plot has speed on the x-axis and consistency on the y-axis to determine how each rider's speed and consistency relationship. The aggregate of the speed and consistency was used and the graph was transformed on the y-axis using probit transformation. 
+
+## Scatterplot with Errorbars for Speed and Consistency
+
+```{r, fig.width= 5, fig.height = 8, echo = TRUE}
+#Scatterplot of all riders ordered in descending Speed
+
+data_tidy %>% 
+  as.tibble() %>%
+  group_by(ridername) %>% 
+  summarize(avgSpeed = mean(Speed_avg), avgCons = mean(Consistency_avg), stderr = sd(Speed_avg)) %>%
+  na.omit() %>%
+  ggplot(aes(y = fct_reorder(as.factor(ridername), desc(avgSpeed)), x = avgSpeed)) + geom_point() + geom_errorbarh(aes(xmax =  avgSpeed + stderr, xmin = avgSpeed - stderr)) + 
+  labs(x = "Average Speed of Riders") +
+  ggtitle("Scatterplot of all riders in descending average Speed")
+
+#Scatterplot of all riders ordered in descending Consistency
+data_tidy  %>% 
+  as.tibble() %>%
+  group_by(ridername) %>% 
+  summarize(avgSpeed = mean(Speed_avg), avgCons = mean(Consistency_avg), sd = sd(Consistency_avg)) %>%
+  na.omit() %>%
+  ggplot(aes(y = fct_reorder(as.factor(ridername), desc(avgCons)), x = avgCons)) + geom_point() +
+  geom_errorbarh(aes(xmax =  avgCons + sd, xmin = avgCons - sd)) + 
+  labs(x = "Average Consistency of Riders") +
+  ggtitle("Scatterplot of all riders in descending average Consistency")
+```
+
+This scatterplot differs from the previous in terms of the arrangement of the data and inclusion of error bars to display the variance of the data. Each rider is plotted in descending order of speed and consistency with error bars included. Riders that only participated in one event were omitted since no variance could be calculated. Further work could be done on transforming the x-axis to bring the data points closer together and also filtering which riders to include in the graph since not all riders participated in the same number of races. 
